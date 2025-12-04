@@ -323,3 +323,86 @@ def get_cot_latent_dataset(
         dataset = processed_dataset
 
     return dataset
+
+def get_interleaving_cot_latent_dataset(
+    scheduled_stage,
+    base_dataset,
+    configs,
+    start_id,
+    latent_id,
+    end_id,
+    no_special_marker=False,
+    shuffle=False,
+):
+
+    n_additional_tokens = 0 if no_special_marker else 2
+
+    def process_dataset(sample):
+
+        if (
+            random.random() < configs.uniform_prob
+        ):  # with some prob, randomly sample stage
+            scheduled_stage_to_train = random.choice(
+                list(range(len(sample["steps_tokenized"]) + 1))
+            )
+        else:
+            scheduled_stage_to_train = scheduled_stage
+
+        if scheduled_stage_to_train > configs.max_latent_stage:
+            n_skip_steps = 10000  # skip all
+            if configs.pad_latent_to_max:
+                n_latent_tokens = configs.max_latent_stage
+            else:
+                n_latent_tokens = min(
+                    len(sample["steps_tokenized"]), configs.max_latent_stage
+                )
+
+        else:
+            n_skip_steps, n_latent_tokens = (
+                scheduled_stage_to_train,
+                scheduled_stage_to_train,
+            )
+
+        if configs.no_cot:
+            n_skip_steps = 100  # skip all step
+            n_latent_tokens = 0
+
+        n_latent_tokens *= configs.c_thought
+
+        tokens = (
+            sample["question_tokenized"]
+            + list(itertools.chain.from_iterable([([] if no_special_marker else [start_id]) + [latent_id] * configs.c_thought + ([] if no_special_marker else [end_id]) + step_tokenized for step_tokenized in sample["steps_tokenized"]]))
+            + sample["answer_tokenized"]
+        )
+
+        return {
+            "input_ids": tokens,
+            "labels": [-100] * len(sample["question_tokenized"])
+            + [-100 if token in [latent_id, start_id, end_id] else token for token in tokens[len(sample["question_tokenized"]):]],
+            "attention_mask": [1] * len(tokens),
+            "idx": sample["idx"],
+            "position_ids": list(range(len(tokens))),
+        }
+
+    if torch.cuda.device_count() > 1:
+        if dist.get_rank() == 0:
+            processed_dataset = base_dataset.map(
+                process_dataset, remove_columns=list(base_dataset.features), num_proc=32
+            )
+            if shuffle:
+                processed_dataset = processed_dataset.shuffle()
+            processed_dataset = [processed_dataset]
+        else:
+            processed_dataset = [None]
+        dist.broadcast_object_list(processed_dataset, src=0)
+        dataset = processed_dataset[0]
+
+    else:
+        processed_dataset = base_dataset.map(
+            process_dataset, remove_columns=list(base_dataset.features), num_proc=32
+        )
+        if shuffle:
+            processed_dataset = processed_dataset.shuffle()
+        dataset = processed_dataset
+
+    return dataset
