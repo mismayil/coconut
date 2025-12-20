@@ -7,11 +7,10 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 import wandb
 
-from coconut2 import Coconut
+from dycoder import Dycoder
 from dataset import (
     get_dataset,
     get_question_latent_dataset,
-    get_cot_latent_dataset,
     get_interleaving_cot_latent_dataset,
     MyCollator,
 )
@@ -28,7 +27,7 @@ from utils import Config, set_seed
 
 def main():
 
-    parser = argparse.ArgumentParser(description="coconut")
+    parser = argparse.ArgumentParser(description="dycoder")
     parser.add_argument("config_file")
     args = parser.parse_args()
 
@@ -84,62 +83,28 @@ def main():
     start_id = tokenizer.convert_tokens_to_ids("<|start-latent|>")
     end_id = tokenizer.convert_tokens_to_ids("<|end-latent|>")
 
-    loaded = False
-
     if configs.load_model_path != "None":
         saved_weights = torch.load(
             configs.load_model_path, map_location="cuda:0"
         )
 
-        if configs.coconut and not any(
-            [k.startswith("base_causallm") for k in saved_weights.keys()]
-        ):
-            # we are loading a base model into coconut model
-            # e.g., for GSM8k, we used a SFTed model to skip the stage 0
-            loaded = True
-            print(model.load_state_dict(saved_weights, strict=False))
-
-        elif not configs.coconut and any(
-            [k.startswith("base_causallm") for k in saved_weights.keys()]
-        ):
-            raise ValueError("Cannot load coconut model weights into a causallm model")
-
-        elif configs.coconut and any(
-            [k.startswith("base_causallm") for k in saved_weights.keys()]
-        ):
-            # loading from preempted run
-            # will handle later
-            pass
-
-        else:
-            # resume or evaluate sft model
-            loaded = True
-            print(model.load_state_dict(saved_weights, strict=False))
-
-    if not (configs.cot or configs.no_thoughts or configs.no_cot):
-        # if we need new tokens, initialize their embeddings and lm heads
-        model.resize_token_embeddings(len(tokenizer))
-        embeddings = model.get_input_embeddings()
-        target_id = tokenizer.convert_tokens_to_ids("<<")
-        # initialize the new token embeddings with a known token
-        # it helps stablize the training
-        for token_id in [latent_id, start_id, end_id]:
-            target_embedding = embeddings.weight.data[target_id] 
-            embeddings.weight.data[token_id] = target_embedding
-            # The input embeddings and lm heads are tied in GPT2. So the code below is not necessary
-            lm_head = model.lm_head
-            lm_head.weight.data[token_id] = lm_head.weight.data[target_id]
-
-    if configs.no_thoughts:
-        configs.c_thought = 0
-        configs.coconut = False
-
-    if configs.coconut:
-        model = Coconut(model, latent_id, start_id, end_id, tokenizer.eos_token_id)
-
-    if configs.load_model_path != "None" and not loaded:
+        # resume or evaluate sft model
         print(model.load_state_dict(saved_weights, strict=False))
 
+    # if we need new tokens, initialize their embeddings and lm heads
+    model.resize_token_embeddings(len(tokenizer))
+    embeddings = model.get_input_embeddings()
+    target_id = tokenizer.convert_tokens_to_ids("<<")
+    # initialize the new token embeddings with a known token
+    # it helps stablize the training
+    for token_id in [latent_id, start_id, end_id]:
+        target_embedding = embeddings.weight.data[target_id] 
+        embeddings.weight.data[token_id] = target_embedding
+        # The input embeddings and lm heads are tied in GPT2. So the code below is not necessary
+        lm_head = model.lm_head
+        lm_head.weight.data[token_id] = lm_head.weight.data[target_id]
+
+    model = Dycoder(model, latent_id, start_id, end_id, tokenizer.eos_token_id)
     model = model.to("cuda:0")
 
     if configs.bf16:
@@ -192,17 +157,14 @@ def main():
 
     for epoch in range(configs.resume, configs.num_epochs):
 
-        scheduled_stage = (
-            0 if (configs.cot or configs.no_cot) else epoch // configs.epochs_per_stage
-        )
+        scheduled_stage =  epoch // configs.epochs_per_stage
         dataset_gen_val = get_question_latent_dataset(
             scheduled_stage,
             base_dataset_valid,
             configs,
             start_id,
             latent_id,
-            end_id,
-            no_special_marker=configs.cot or configs.no_cot or configs.no_thoughts,
+            end_id
         )
 
         valid_gen_dataloader = torch.utils.data.DataLoader(
@@ -222,7 +184,6 @@ def main():
                 start_id,
                 latent_id,
                 end_id,
-                no_special_marker=configs.cot or configs.no_cot or configs.no_thoughts,
                 shuffle=True,
             )
 
@@ -238,14 +199,13 @@ def main():
             # the sampler is deterministic even if shuffle is set to True
             # so we have shuffled the dataset when it's constructed (at every epoch).
 
-            dataset_loss_val = get_cot_latent_dataset(
+            dataset_loss_val = get_interleaving_cot_latent_dataset(
                 scheduled_stage,
                 base_dataset_valid,
                 configs,
                 start_id,
                 latent_id,
                 end_id,
-                no_special_marker=configs.cot or configs.no_cot or configs.no_thoughts,
             )
 
             valid_loss_dataloader = torch.utils.data.DataLoader(
@@ -351,118 +311,118 @@ def main():
             # val loss
             total_loss = 0
 
-            # with torch.no_grad():
-            #     model.eval()
-            #     for step, batch in enumerate(valid_loss_dataloader):
+            with torch.no_grad():
+                model.eval()
+                for step, batch in enumerate(valid_loss_dataloader):
 
-            #         batch = {
-            #             key: batch[key].to("cuda:0") for key in batch.keys() if key != "idx"
-            #         }
+                    batch = {
+                        key: batch[key].to("cuda:0") for key in batch.keys() if key != "idx"
+                    }
 
-            #         outputs = model(**batch)
-            #         loss = outputs.loss
-            #         total_loss += loss.item()
+                    outputs = model(**batch)
+                    loss = outputs.loss
+                    total_loss += loss.item()
 
-            #     if wandb_run:
+                if wandb_run:
 
-            #         log_dict = {
-            #             "eval/loss": total_loss / len(valid_loss_dataloader),
-            #         }
-            #         wandb_run.log(log_dict)
-            #         print("eval loss", total_loss / len(valid_loss_dataloader))
+                    log_dict = {
+                        "eval/loss": total_loss / len(valid_loss_dataloader),
+                    }
+                    wandb_run.log(log_dict)
+                    print("eval loss", total_loss / len(valid_loss_dataloader))
 
-        # # val generation accuracy
-        # total_length = len(valid_gen_dataloader)
+        # val generation accuracy
+        total_length = len(valid_gen_dataloader)
 
-        # pbar = tqdm(
-        #     colour="blue", desc=f"Test Accuracy", total=total_length, dynamic_ncols=True
-        # )
-        # cor, cor_cot, total = (
-        #     torch.tensor(0, device="cuda:0"),
-        #     torch.tensor(0, device="cuda:0"),
-        #     torch.tensor(0, device="cuda:0"),
-        # )
+        pbar = tqdm(
+            colour="blue", desc=f"Test Accuracy", total=total_length, dynamic_ncols=True
+        )
+        cor, cor_cot, total = (
+            torch.tensor(0, device="cuda:0"),
+            torch.tensor(0, device="cuda:0"),
+            torch.tensor(0, device="cuda:0"),
+        )
 
-        # with torch.no_grad():
-        #     model.eval()
-        #     for idx, batch in enumerate(valid_gen_dataloader):
-        #         test_idx = batch["idx"][0]
+        with torch.no_grad():
+            model.eval()
+            for idx, batch in enumerate(valid_gen_dataloader):
+                test_idx = batch["idx"][0]
 
-        #         batch = {
-        #             k: v.to("cuda:0")
-        #             for k, v in batch.items()
-        #             if v != None and k not in ["idx", "position_ids"]
-        #         }
-        #         # https://github.com/huggingface/transformers/issues/32492
+                batch = {
+                    k: v.to("cuda:0")
+                    for k, v in batch.items()
+                    if v != None and k not in ["idx", "position_ids"]
+                }
+                # https://github.com/huggingface/transformers/issues/32492
 
-        #         assert len(batch["input_ids"]) == 1
-        #         answer = answers_val[test_idx.cpu().item()]
-        #         answer_cot = cot_val[test_idx.cpu().item()]
-        #         question = question_val[test_idx.cpu().item()]
+                assert len(batch["input_ids"]) == 1
+                answer = answers_val[test_idx.cpu().item()]
+                answer_cot = cot_val[test_idx.cpu().item()]
+                question = question_val[test_idx.cpu().item()]
 
-        #         total += 1
+                total += 1
 
-        #         # synced_gpus=True in FSDP mode, as we need to keep # forward pass the same on each device
-        #         outputs = model.generate(
-        #             **batch,
-        #             max_new_tokens=max_new_tokens,
-        #             synced_gpus=not configs.only_eval,
-        #         )
+                # synced_gpus=True in FSDP mode, as we need to keep # forward pass the same on each device
+                outputs = model.generate(
+                    **batch,
+                    max_new_tokens=max_new_tokens,
+                    synced_gpus=not configs.only_eval,
+                )
 
-        #         text_output = tokenizer.decode(outputs[0], skip_special_tokens=True)
-        #         answer_output = text_output.split("#")[-1].replace(",", "").strip()
-        #         cot_output = (
-        #             ("\n".join(text_output.split("\n")[1:])).split("#")[0].strip()
-        #         )
+                text_output = tokenizer.decode(outputs[0], skip_special_tokens=True)
+                answer_output = text_output.split("#")[-1].replace(",", "").strip()
+                cot_output = (
+                    ("\n".join(text_output.split("\n")[1:])).split("#")[0].strip()
+                )
 
-        #         if idx < 5:
-        #             # print some examples
-        #             print(
-        #                 f"Question {test_idx}: Answer = '{answer}' CoT = '{answer_cot}'"
-        #             )
-        #             print(f"Full output: '{tokenizer.decode(outputs[0])}'")
-        #             print(f"Extracted Output: '{answer_output}'")
+                if idx < 5:
+                    # print some examples
+                    print(
+                        f"Question {test_idx}: Answer = '{answer}' CoT = '{answer_cot}'"
+                    )
+                    print(f"Full output: '{tokenizer.decode(outputs[0])}'")
+                    print(f"Extracted Output: '{answer_output}'")
 
-        #         cor += answer_output == answer
-        #         cor_cot += cot_output == answer_cot
+                cor += answer_output == answer
+                cor_cot += cot_output == answer_cot
 
-        #         pbar.update(1)
-        #         pbar.set_description(
-        #             f"Test accuracy: {round(float(cor.detach().float() / total.detach().float()), 2)}"
-        #         )
+                pbar.update(1)
+                pbar.set_description(
+                    f"Test accuracy: {round(float(cor.detach().float() / total.detach().float()), 2)}"
+                )
 
-        #     pbar.close()
-        #     print(f"Device cuda:0: Cor={cor}, CoT={cor_cot}, Total={total}")
+            pbar.close()
+            print(f"Device cuda:0: Cor={cor}, CoT={cor_cot}, Total={total}")
 
-        # cor_cot = cor_cot.item()
-        # cor = cor.item()
-        # total = total.item()
-        # print(f"Accuracy on validation set: {cor} / {total} = {cor/total}")
-        # print(f"CoT match on validation set: {cor_cot} / {total} = {cor_cot/total}")
-        # sys.stdout.flush()
+        cor_cot = cor_cot.item()
+        cor = cor.item()
+        total = total.item()
+        print(f"Accuracy on validation set: {cor} / {total} = {cor/total}")
+        print(f"CoT match on validation set: {cor_cot} / {total} = {cor_cot/total}")
+        sys.stdout.flush()
 
-        # if wandb_run:
-        #     wandb_run.log({"eval/acc": cor / total, "eval/cot_em": cor_cot / total})
+        if wandb_run:
+            wandb_run.log({"eval/acc": cor / total, "eval/cot_em": cor_cot / total})
 
         if configs.only_eval:
             break
 
-        # if (
-        #     cor / total > best_acc
-        #     and configs.save_only_improve
-        #     and not configs.debug
-        #     and not configs.only_eval
-        # ):
-        #     states = model.state_dict()
+        if (
+            cor / total > best_acc
+            and configs.save_only_improve
+            and not configs.debug
+            and not configs.only_eval
+        ):
+            states = model.state_dict()
 
-        #     torch.save(states, os.path.join(save_dir, f"checkpoint_{epoch + 1}"))
-        #     print("saving model.")
+            torch.save(states, os.path.join(save_dir, f"checkpoint_{epoch + 1}"))
+            print("saving model.")
 
-        #     best_acc = cor / total
+            best_acc = cor / total
 
-        #     del states
-        #     gc.collect()
-        #     torch.cuda.empty_cache()
+            del states
+            gc.collect()
+            torch.cuda.empty_cache()
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ Outputs = namedtuple("Outputs", ["loss", "inputs_embeds", "logits"])
 MAX_N_LATENT = 8
 
 
-class Coconut(nn.Module):
+class Dycoder(nn.Module):
 
     def __init__(
         self,
@@ -22,7 +22,7 @@ class Coconut(nn.Module):
         eos_token_id,
     ):
 
-        super(Coconut, self).__init__()
+        super(Dycoder, self).__init__()
         self.gen_forward_cnt = 0
         self.base_causallm = base_causallm
         self.latent_token_id = latent_token_id
@@ -207,39 +207,31 @@ class Coconut(nn.Module):
             ).reshape(1, -1),
         )
         inputs_embeds = outputs.inputs_embeds
-
-        # get the first token using the current hidden state
-        next_token = torch.argmax(outputs.logits[0, -1]).item()
-        tokens.append(next_token)
-        new_token_embed = self.embedding(
-            torch.tensor(next_token, device=input_ids.device)
-        ).view(1, 1, -1)
-        new_inputs_embeds = torch.cat((inputs_embeds, new_token_embed), dim=1)
+        latent_mode = False
 
         # get other tokens
-        for _ in range(max_new_tokens - 1):
-            outputs = self.base_causallm(inputs_embeds=new_inputs_embeds)
+        for _ in range(max_new_tokens):
+            outputs = self.base_causallm(inputs_embeds=inputs_embeds)
             self.gen_forward_cnt += 1
             next_token = torch.argmax(outputs.logits[0, -1]).item()
+            
             if next_token == self.eos_token_id:
                 break
+            if next_token == self.start_latent_id:
+                latent_mode = True
+            elif next_token == self.end_latent_id:
+                latent_mode = False
+            
+            if latent_mode:
+                # replace with the preceding last hidden states
+                new_token_embed = outputs.inputs_embeds[-1, -1].view(1, 1, -1)
+            else:
+                new_token_embed = self.embedding(torch.tensor(next_token, device=input_ids.device)).view(1, 1, -1)
             tokens.append(next_token)
-            new_token_embed = self.embedding(
-                torch.tensor(next_token, device=input_ids.device)
-            ).view(1, 1, -1)
-            new_inputs_embeds = torch.cat((new_inputs_embeds, new_token_embed), dim=1)
-
-        if synced_gpus:
-            # in FSDP, the number of forward pass need to be the same across devices
-            while (
-                self.gen_forward_cnt < max_new_tokens + MAX_N_LATENT
-            ):  # leave some room for latent tokens
-                self.gen_forward_cnt += 1
-                _ = self.base_causallm(inputs_embeds=new_inputs_embeds)
+            inputs_embeds = torch.cat((inputs_embeds, new_token_embed), dim=1)
 
         if output_embedding:
             # for analysis purpose
-            return torch.tensor(tokens).view(1, -1), new_inputs_embeds
-
+            return torch.tensor(tokens).view(1, -1), inputs_embeds
         else:
             return torch.tensor(tokens).view(1, -1)

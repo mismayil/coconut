@@ -334,9 +334,6 @@ def get_interleaving_cot_latent_dataset(
     no_special_marker=False,
     shuffle=False,
 ):
-
-    n_additional_tokens = 0 if no_special_marker else 2
-
     def process_dataset(sample):
 
         if (
@@ -348,37 +345,25 @@ def get_interleaving_cot_latent_dataset(
         else:
             scheduled_stage_to_train = scheduled_stage
 
-        if scheduled_stage_to_train > configs.max_latent_stage:
-            n_skip_steps = 10000  # skip all
-            if configs.pad_latent_to_max:
-                n_latent_tokens = configs.max_latent_stage
-            else:
-                n_latent_tokens = min(
-                    len(sample["steps_tokenized"]), configs.max_latent_stage
-                )
+        step_tokens = []
 
-        else:
-            n_skip_steps, n_latent_tokens = (
-                scheduled_stage_to_train,
-                scheduled_stage_to_train,
-            )
-
-        if configs.no_cot:
-            n_skip_steps = 100  # skip all step
-            n_latent_tokens = 0
-
-        n_latent_tokens *= configs.c_thought
-
+        steps_difficulties = sample.get("steps_difficulties", [1]*len(sample["steps_tokenized"]))
+        for step_tokenized, difficulty in zip(sample["steps_tokenized"], steps_difficulties):
+            step_tokens.append(step_tokenized + ([] if no_special_marker else [start_id]) + [latent_id] * difficulty * configs.c_thought * scheduled_stage_to_train + ([] if no_special_marker else [end_id]))
+        
         tokens = (
             sample["question_tokenized"]
-            + list(itertools.chain.from_iterable([([] if no_special_marker else [start_id]) + [latent_id] * configs.c_thought + ([] if no_special_marker else [end_id]) + step_tokenized for step_tokenized in sample["steps_tokenized"]]))
+            + ([] if no_special_marker else [start_id])
+            + [latent_id] * configs.c_thought * scheduled_stage_to_train
+            + ([] if no_special_marker else [end_id])
+            + list(itertools.chain.from_iterable(step_tokens))
             + sample["answer_tokenized"]
         )
 
         return {
             "input_ids": tokens,
             "labels": [-100] * len(sample["question_tokenized"])
-            + [-100 if token in [latent_id, start_id, end_id] else token for token in tokens[len(sample["question_tokenized"]):]],
+            + [-100 if token == latent_id else token for token in tokens[len(sample["question_tokenized"]):]],
             "attention_mask": [1] * len(tokens),
             "idx": sample["idx"],
             "position_ids": list(range(len(tokens))),
