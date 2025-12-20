@@ -6,6 +6,11 @@ import torch.nn as nn
 from torch.nn import CrossEntropyLoss
 from collections import namedtuple
 from transformers.models.gpt2 import GPT2LMHeadModel
+from dotenv import load_dotenv
+
+from utils import BatchComputeRangeIterator, ComputeRange
+
+load_dotenv()
 
 Outputs = namedtuple("Outputs", ["loss", "inputs_embeds", "logits"])
 MAX_N_LATENT = 8
@@ -37,135 +42,88 @@ class Dycoder(nn.Module):
             self.embedding = self.base_causallm.get_input_embeddings()
 
     def forward(self, input_ids, attention_mask, labels, position_ids, **kwargs):
+        batch_compute_ranges = []
 
-        logits = []
+        for b in range(input_ids.shape[0]):
+            compute_ranges = []
+            
+            start_latent_positions = (
+                input_ids[b] == self.start_latent_id
+            ).nonzero().reshape(-1).tolist() 
+            end_latent_positions = (
+                input_ids[b] == self.end_latent_id
+            ).nonzero().reshape(-1).tolist()
+            
+            all_positions = sorted(start_latent_positions + end_latent_positions)
+            
+            if all_positions:
+                if all_positions[0] > 0:
+                    compute_ranges.append(ComputeRange(0, all_positions[0], "lang"))
 
-        latent_indices = (
-            input_ids == self.latent_token_id
-        ).nonzero()  # (num_latent_tokens_in_the_batch, 2)
-
-        latent_lists = [
-            [idx[1].item() for idx in latent_indices if idx[0] == i]
-            for i in range(input_ids.shape[0])
-        ]  # bs, num_latent_tokens_in_the_instance (difference across the batch)
-        
-        sorted_latent_indices = sorted(set(latent_indices[:, 1].tolist()))
-        compute_ranges = [(0, sorted_latent_indices[0])] + [(sorted_latent_indices[i], sorted_latent_indices[i+1]) for i in range(len(sorted_latent_indices)-1)]
-
-        max_n_latents = max([len(l) for l in latent_lists])
-
-        inputs_embeds = self.embedding(input_ids)
-
-        kv_cache = None
-
-        for compute_range in compute_ranges:
-
-            if kv_cache == None:
-                # first forward pass
-                outputs = self.base_causallm(
-                    inputs_embeds=inputs_embeds[
-                        :, compute_range[0] : compute_range[1], :
-                    ],
-                    attention_mask=attention_mask[
-                        :, compute_range[0] : compute_range[1]
-                    ],
-                    position_ids=position_ids[
-                        :, compute_range[0] : compute_range[1]
-                    ],
-                    output_hidden_states=True,
-                )
-                hidden_states_offset = 0
-
+                for i in range(len(all_positions)-1):
+                    if i % 2 == 0:
+                        compute_ranges.append(ComputeRange(all_positions[i], all_positions[i+1], "latent"))
+                    else:
+                        compute_ranges.append(ComputeRange(all_positions[i], all_positions[i+1], "lang"))
+                
+                if all_positions[-1] < input_ids.shape[1]:
+                    compute_ranges.append(ComputeRange(all_positions[-1], input_ids.shape[1], "lang"))
+                
+                batch_compute_ranges.append(compute_ranges)
             else:
-                # extract kv cache to reuse
-                past_key_values = [
-                    (
-                        k[:, :, : compute_range[0], :],
-                        v[:, :, : compute_range[0], :],
-                    )
-                    for k, v in kv_cache
-                ]
+                batch_compute_ranges.append([ComputeRange(0, input_ids.shape[1], "lang")])
 
+        batch_cr_iterator = BatchComputeRangeIterator(batch_compute_ranges)
+        inputs_embeds = self.embedding(input_ids)
+        batch_inputs_embeds = [inputs_embeds[b] for b in range(input_ids.shape[0])]
+        last_batch_hidden_states = [None] * input_ids.shape[0]
+        batch_logits = [None] * input_ids.shape[0]
+        batch_kv_cache = [None] * input_ids.shape[0]
+
+        for (lang_batch_indices, lang_compute_range), (latent_batch_indices, latent_compute_range) in batch_cr_iterator:
+            
+            if lang_batch_indices is not None:
+                # first forward pass
+                lang_inputs_embeds = torch.stack([batch_inputs_embeds[b][: lang_compute_range.end, :] for b in lang_batch_indices])
+                lang_attention_mask = torch.stack([attention_mask[b, : lang_compute_range.end] for b in lang_batch_indices])
+                lang_position_ids = torch.stack([position_ids[b, : lang_compute_range.end] for b in lang_batch_indices])
                 outputs = self.base_causallm(
-                    inputs_embeds=inputs_embeds[
-                        :, compute_range[0] : compute_range[1], :
-                    ],
-                    attention_mask=attention_mask[:, : compute_range[1]],
-                    position_ids=position_ids[
-                        :, compute_range[0] : compute_range[1]
-                    ],
-                    past_key_values=past_key_values,
+                    inputs_embeds=lang_inputs_embeds,
+                    attention_mask=lang_attention_mask,
+                    position_ids=lang_position_ids,
                     output_hidden_states=True,
                 )
+                # hidden_states_offset = 0
 
-                hidden_states_offset = compute_range[0]
-                # when we use kv_cache for the first k tokens
-                # in `outputs.hidden_states`, [0, k) will be skipped
-                # so we need to keep this offset to correctly use the last hidden states
+                hidden_states = outputs.hidden_states[-1]  # Get the last layer hidden states
 
-            logits.append(outputs.logits)
+                for idx, b in enumerate(lang_batch_indices):
+                    last_batch_hidden_states[b] = hidden_states[idx]
+                    batch_logits[b] = outputs.logits[idx]
 
-            hidden_states = outputs.hidden_states[
-                -1
-            ]  # Get the last layer hidden states
-            kv_cache = outputs.past_key_values
+            # kv_cache = outputs.past_key_values
 
-            # to avoid in-place operations
-            # break down inputs_embeds (bs, len, hidden_size) into a list of list of 1-d tensors
-            tensor_list = [
-                [
-                    inputs_embeds[batch_idx, pos, :]
-                    for pos in range(inputs_embeds.shape[1])
-                ]
-                for batch_idx in range(inputs_embeds.shape[0])
-            ]
-
-            # replace some of them with continuous thoughts
-            for instance_idx, latent_ids in enumerate(latent_lists):
-                if latent_ids and latent_ids[0] <= compute_range[1]:
-                    latent_id = latent_ids.pop(0)
-
-                    # replace it with the preceding last hidden states
-                    tensor_list[instance_idx][latent_id] = hidden_states[
-                        instance_idx, latent_id - 1 - hidden_states_offset, :
-                    ]
-
-            # assemble the new inputs_embeds
-            inputs_embeds = torch.stack(
-                [
-                    torch.stack(tensor_list[batch_idx])
-                    for batch_idx in range(inputs_embeds.shape[0])
-                ]
-            )
-
-        final_compute_range = (compute_ranges[-1][1], inputs_embeds.shape[1])
-    
-        # final pass
-        outputs = self.base_causallm(
-            inputs_embeds=inputs_embeds[
-                :, final_compute_range[0] : final_compute_range[1], :
-            ],
-            attention_mask=attention_mask[:, : final_compute_range[1]],
-            position_ids=position_ids[:, final_compute_range[0] : final_compute_range[1]],
-            past_key_values=(
-                [
-                    (
-                        k[:, :, : final_compute_range[0], :],
-                        v[:, :, : final_compute_range[0], :],
+            if latent_batch_indices is not None:
+                for latent_id in range(latent_compute_range.start+1, latent_compute_range.end):
+                    latent_inputs_embeds = torch.stack([batch_inputs_embeds[b][: latent_id, :] for b in latent_batch_indices])
+                    latent_attention_mask = torch.stack([attention_mask[b, : latent_id] for b in latent_batch_indices])
+                    latent_position_ids = torch.stack([position_ids[b, : latent_id] for b in latent_batch_indices])
+                    outputs = self.base_causallm(
+                        inputs_embeds=latent_inputs_embeds,
+                        attention_mask=latent_attention_mask,
+                        position_ids=latent_position_ids,
+                        output_hidden_states=True,
                     )
-                    for k, v in kv_cache
-                ]
-                if kv_cache
-                else None
-            ),
-            output_hidden_states=True,
-        )
+                    hidden_states = outputs.hidden_states[-1]  # Get the last layer hidden states
+                    for idx, b in enumerate(latent_batch_indices):
+                        last_batch_hidden_states[b] = hidden_states[idx]
+                        batch_logits[b] = outputs.logits[idx]
+                    for latent_b_idx in latent_batch_indices:
+                        batch_inputs_embeds[latent_b_idx][latent_id] = last_batch_hidden_states[latent_b_idx][latent_id - 1, :]
 
-        logits.append(outputs.logits)
+        # self.gen_forward_cnt += max_n_latents + 1
 
-        self.gen_forward_cnt += max_n_latents + 1
-
-        logits = torch.cat(logits, dim=-2)
+        logits = torch.stack(batch_logits)
         shift_logits = logits[..., :-1, :].contiguous()
         shift_labels = labels[..., 1:].contiguous()
         loss_fct = CrossEntropyLoss()
@@ -211,22 +169,25 @@ class Dycoder(nn.Module):
 
         # get other tokens
         for _ in range(max_new_tokens):
-            outputs = self.base_causallm(inputs_embeds=inputs_embeds)
+            outputs = self.base_causallm(inputs_embeds=inputs_embeds, output_hidden_states=True)
             self.gen_forward_cnt += 1
             next_token = torch.argmax(outputs.logits[0, -1]).item()
             
             if next_token == self.eos_token_id:
                 break
-            if next_token == self.start_latent_id:
-                latent_mode = True
-            elif next_token == self.end_latent_id:
-                latent_mode = False
             
-            if latent_mode:
+            if next_token == self.end_latent_id:
+                latent_mode = False
+                new_token_embed = self.embedding(torch.tensor(next_token, device=input_ids.device)).view(1, 1, -1)
+            elif latent_mode:
                 # replace with the preceding last hidden states
-                new_token_embed = outputs.inputs_embeds[-1, -1].view(1, 1, -1)
+                new_token_embed = outputs.hidden_states[-1][-1][-1].view(1, 1, -1)
+            elif next_token == self.start_latent_id:
+                latent_mode = True
+                new_token_embed = self.embedding(torch.tensor(next_token, device=input_ids.device)).view(1, 1, -1)
             else:
                 new_token_embed = self.embedding(torch.tensor(next_token, device=input_ids.device)).view(1, 1, -1)
+            
             tokens.append(next_token)
             inputs_embeds = torch.cat((inputs_embeds, new_token_embed), dim=1)
 

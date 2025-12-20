@@ -76,14 +76,14 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(configs.model_id)
     tokenizer = AutoTokenizer.from_pretrained(configs.model_id)
     tokenizer.pad_token = tokenizer.eos_token
-    tokenizer.add_tokens("<|start-latent|>")
-    tokenizer.add_tokens("<|end-latent|>")
-    tokenizer.add_tokens("<|latent|>")
+    tokenizer.add_tokens("<|start-latent|>", special_tokens=True)
+    tokenizer.add_tokens("<|end-latent|>", special_tokens=True)
+    tokenizer.add_tokens("<|latent|>", special_tokens=True)
     latent_id = tokenizer.convert_tokens_to_ids("<|latent|>")
     start_id = tokenizer.convert_tokens_to_ids("<|start-latent|>")
     end_id = tokenizer.convert_tokens_to_ids("<|end-latent|>")
 
-    if configs.load_model_path != "None":
+    if configs.load_model_path:
         saved_weights = torch.load(
             configs.load_model_path, map_location="cuda:0"
         )
@@ -123,7 +123,7 @@ def main():
 
     if not configs.only_eval:
         base_dataset_train = get_dataset(
-            configs.train_path, tokenizer, max_size=5000 if configs.debug else 100000000
+            configs.train_path, tokenizer, max_size=128 if configs.debug else 100000000
         )
 
     if "gsm" in configs.val_path:
@@ -157,7 +157,7 @@ def main():
 
     for epoch in range(configs.resume, configs.num_epochs):
 
-        scheduled_stage =  epoch // configs.epochs_per_stage
+        scheduled_stage = (epoch // configs.epochs_per_stage) + 1
         dataset_gen_val = get_question_latent_dataset(
             scheduled_stage,
             base_dataset_valid,
