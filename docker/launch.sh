@@ -1,11 +1,11 @@
 #!/bin/bash
 
-IMAGE="registry.rcp.epfl.ch/nlp/ismayilz/coconut"
+IMAGE="registry.rcp.epfl.ch/nlp/ismayilz/dycoder"
 COMMAND=$1
 CLUSTER=rcp-caas-prod
 N_GPUS=1
 N_CPUS=8
-JOB_PREFIX="project-coconut"
+JOB_PREFIX="project-dycoder"
 JOB_SUFFIX="dev"
 MEMORY="64G"
 GPU_MEMORY="32G"

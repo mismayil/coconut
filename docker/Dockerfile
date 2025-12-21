@@ -8,8 +8,8 @@ ENV USER_NAME=ismayilz
 ENV HOME=/home/${USER_NAME}
 ENV CONDA_PREFIX=${HOME}/.conda
 ENV CONDA=${CONDA_PREFIX}/condabin/conda
-ENV REPO_DIR=${HOME}/project-coconut
-ENV CONDA_ENV=coconut
+ENV REPO_DIR=${HOME}/project-dycoder
+ENV CONDA_ENV=dycoder
 
 WORKDIR /
 

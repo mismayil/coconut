@@ -2,9 +2,9 @@
 
 SCRATCH_HOME="/mnt/scratch/home/ismayilz"
 HOME="/home/ismayilz"
-CONDA_ENV=coconut
+CONDA_ENV=dycoder
 CONDA=/home/ismayilz/.conda/condabin/conda
-PROJECT_HOME=$SCRATCH_HOME/project-coconut
+PROJECT_HOME=$SCRATCH_HOME/project-dycoder
 
 # symlink folders
 rm -rf ~/.ssh
