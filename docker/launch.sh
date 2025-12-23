@@ -13,12 +13,11 @@ VERBOSE=1
 N_GPUS_SET=1
 NODE_POOL="default"
 DELETE_JOBS=0
-ENTRYPOINT_ARGS=""
 PREEMPTIBLE=0
 PROJECT="nlp-ismayilz"
 shift 1
 
-while getopts m:l:c:g:ps:u:r:n:e:dq opt; do
+while getopts m:l:c:g:ps:u:n:dq opt; do
 	case ${opt} in
 		m)
 			MEMORY=${OPTARG}
@@ -50,9 +49,6 @@ while getopts m:l:c:g:ps:u:r:n:e:dq opt; do
 		n)
 			NODE_POOL=${OPTARG}
 			;;
-		e)
-			ENTRYPOINT_ARGS=${OPTARG}
-			;;
 		d)
 			DELETE_JOBS=1
 			;;
@@ -64,6 +60,10 @@ while getopts m:l:c:g:ps:u:r:n:e:dq opt; do
 			;;
 	esac
 done
+
+# get rest of the arguments as script args after --
+shift $((OPTIND -1))
+SCRIPT_ARGS="$@"
 
 JOB_NAME=${JOB_PREFIX}-${JOB_SUFFIX}
 
@@ -91,8 +91,8 @@ if [ "$VERBOSE" == 1 ]; then
 		echo delete existing job: true
 	fi
 
-	if [ "$ENTRYPOINT_ARGS" != "" ]; then
-		echo entrypoint args: ${ENTRYPOINT_ARGS}
+	if [ "$SCRIPT_ARGS" != "" ]; then
+		echo script args: ${SCRIPT_ARGS}
 	fi
 
 	if [ "$PREEMPTIBLE" == 1 ]; then
@@ -149,7 +149,7 @@ if [ "$COMMAND" == "run" ]; then
 		$GPU_ARGS \
 		$NODE_POOL_ARGS \
 		--pvc nlp-scratch:/mnt/scratch \
-		-- $ENTRYPOINT_ARGS
+		-- $SCRIPT_ARGS
 	exit 0
 fi
 
