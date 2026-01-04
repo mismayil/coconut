@@ -2,7 +2,7 @@
 
 project: dycoder
 save_path: /mnt/scratch/home/ismayilz/project-dycoder/models
-name: gsm-dycoder-gpt2
+name: gsm-dycoder-gpt2-e5
 
 only_eval: True
 
@@ -14,12 +14,12 @@ pad_latent_to_max: True
 save_only_improve: False
 uniform_prob: 0.0
 model_id: openai-community/gpt2
-load_model_path: /mnt/scratch/home/ismayilz/project-dycoder/models/gsm-dycoder-gpt2/checkpoint_3
+load_model_path: /mnt/scratch/home/ismayilz/project-dycoder/models/gsm-dycoder-gpt2-e5/checkpoint_5
 seed: 0
 resume: 0
 bf16: False
 train_path: data/gsm/gsm_train.json
-val_path: data/gsm/gsm_valid.json
+val_path: data/gsm/gsm_test.json
 reset_optimizer: True
 batch_size_training: 16
 debug: False

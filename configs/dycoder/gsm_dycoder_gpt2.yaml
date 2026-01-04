@@ -2,7 +2,7 @@
 
 project: dycoder
 save_path: /mnt/scratch/home/ismayilz/project-dycoder/models
-name: gsm-dycoder-gpt2-v2
+name: gsm-dycoder-gpt2-e5
 
 only_eval: False
 

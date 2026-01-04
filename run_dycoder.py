@@ -105,14 +105,6 @@ def main():
     start_id = tokenizer.convert_tokens_to_ids("<|start-latent|>")
     end_id = tokenizer.convert_tokens_to_ids("<|end-latent|>")
 
-    if configs.load_model_path:
-        saved_weights = torch.load(
-            configs.load_model_path, map_location=torch.device(rank)
-        )
-
-        # resume or evaluate sft model
-        print(model.load_state_dict(saved_weights, strict=False))
-
     # if we need new tokens, initialize their embeddings and lm heads
     model.resize_token_embeddings(len(tokenizer))
     embeddings = model.get_input_embeddings()
@@ -127,6 +119,15 @@ def main():
         lm_head.weight.data[token_id] = lm_head.weight.data[target_id]
 
     model = Dycoder(model, latent_id, start_id, end_id, tokenizer.eos_token_id)
+
+    if configs.load_model_path:
+        saved_weights = torch.load(
+            configs.load_model_path, map_location=torch.device(rank)
+        )
+
+        # resume or evaluate saved model - load into Dycoder model
+        print(model.load_state_dict(saved_weights, strict=False))
+    
     print(f"Running FSDP on rank = {rank}, world size = {world_size}")
     model = model.to(rank)
 

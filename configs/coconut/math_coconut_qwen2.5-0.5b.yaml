@@ -2,26 +2,26 @@
 
 project: dycoder
 save_path: /mnt/scratch/home/ismayilz/project-dycoder/models
-name: math-cot-qwen2.5-0.5b-e5
+name: math-coconut-qwen2.5-0.5b-e5
 
 only_eval: False
 
-coconut: False
-cot: True
+coconut: True
+cot: False
 no_thoughts: False
 no_cot: False
 
-c_thought: 0
+c_thought: 2
 epochs_per_stage: 1
-max_latent_stage: 0
+max_latent_stage: 3
 pad_latent_to_max: True
 
 save_only_improve: True
 uniform_prob: 0.0
 model_id: Qwen/Qwen2.5-0.5B
-load_model_path: None
+load_model_path: /mnt/scratch/home/ismayilz/project-dycoder/models/math-cot-qwen2.5-0.5b-e5/checkpoint_4
 seed: 0
-resume: 0
+resume: 1
 bf16: False
 train_path: data/math/math_train.json
 val_path: data/math/math_val.json
