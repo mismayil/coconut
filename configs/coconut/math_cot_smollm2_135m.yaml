@@ -2,7 +2,7 @@
 
 project: dycoder
 save_path: /mnt/scratch/home/ismayilz/project-dycoder/models
-name: math-cot-qwen2.5-0.5b-e5
+name: math-cot-smollm2-135m-e5
 
 only_eval: False
 
@@ -18,7 +18,7 @@ pad_latent_to_max: True
 
 save_only_improve: True
 uniform_prob: 0.0
-model_id: Qwen/Qwen2.5-0.5B
+model_id: HuggingFaceTB/SmolLM2-135M
 load_model_path: null
 seed: 0
 resume: 0

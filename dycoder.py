@@ -95,6 +95,8 @@ class Dycoder(nn.Module):
 
                 for idx, b in enumerate(lang_batch_indices):
                     batch_logits[b] = outputs.logits[idx]
+                
+                del outputs, lang_inputs_embeds, lang_attention_mask, lang_position_ids, hidden_states
 
             if latent_batch_indices is not None:
                 for latent_id in range(latent_compute_range.start+1, latent_compute_range.end):
@@ -109,8 +111,15 @@ class Dycoder(nn.Module):
                     )
                     hidden_states = outputs.hidden_states[-1]  # Get the last layer hidden states
                     for idx, b in enumerate(latent_batch_indices):
-                        batch_inputs_embeds[b][latent_id] = hidden_states[idx][latent_id - 1, :]
+                        # Detach hidden states to prevent gradient graph accumulation
+                        batch_inputs_embeds[b] = torch.cat([
+                            batch_inputs_embeds[b][:latent_id],
+                            hidden_states[idx][latent_id - 1, :].unsqueeze(0),
+                            batch_inputs_embeds[b][latent_id + 1:]
+                        ], dim=0)
                         batch_logits[b] = outputs.logits[idx]
+                    
+                    del outputs, latent_inputs_embeds, latent_attention_mask, latent_position_ids, hidden_states
 
                 self.gen_forward_cnt += (latent_compute_range.end - latent_compute_range.start)
 
@@ -155,7 +164,8 @@ class Dycoder(nn.Module):
                 0, input_ids.shape[1], dtype=torch.long, device=input_ids.device
             ).reshape(1, -1),
         )
-        inputs_embeds = outputs.inputs_embeds
+        inputs_embeds = outputs.inputs_embeds.detach()  # Detach to prevent graph accumulation
+        del outputs
         latent_mode = False
 
         # get other tokens
@@ -165,6 +175,7 @@ class Dycoder(nn.Module):
             next_token = torch.argmax(outputs.logits[0, -1]).item()
             
             if next_token == self.eos_token_id:
+                del outputs
                 break
             
             if next_token == self.end_latent_id:
@@ -172,15 +183,16 @@ class Dycoder(nn.Module):
                 new_token_embed = self.embedding(torch.tensor(next_token, device=input_ids.device)).view(1, 1, -1)
             elif latent_mode:
                 # replace with the preceding last hidden states
-                new_token_embed = outputs.hidden_states[-1][-1][-1].view(1, 1, -1)
+                new_token_embed = outputs.hidden_states[-1][-1][-1].detach().view(1, 1, -1)
             elif next_token == self.start_latent_id:
                 latent_mode = True
                 new_token_embed = self.embedding(torch.tensor(next_token, device=input_ids.device)).view(1, 1, -1)
             else:
                 new_token_embed = self.embedding(torch.tensor(next_token, device=input_ids.device)).view(1, 1, -1)
             
+            del outputs
             tokens.append(next_token)
-            inputs_embeds = torch.cat((inputs_embeds, new_token_embed), dim=1)
+            inputs_embeds = torch.cat((inputs_embeds, new_token_embed.detach()), dim=1)
 
         if output_embedding:
             # for analysis purpose

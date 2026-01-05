@@ -120,6 +120,7 @@ class DycoderWithKVCache(nn.Module):
                     position_ids=lang_position_ids,
                     output_hidden_states=True,
                     past_key_values=past_key_values,
+                    use_cache=True,
                 )
 
                 hidden_states = outputs.hidden_states[-1]  # Get the last layer hidden states
@@ -128,6 +129,8 @@ class DycoderWithKVCache(nn.Module):
                     batch_logits[b].append(outputs.logits[idx])
 
                 _cache_past_key_values_for_batch(batch_kv_cache, lang_batch_indices, outputs.past_key_values)
+                
+                del outputs, lang_inputs_embeds, lang_attention_mask, lang_position_ids, hidden_states, past_key_values
 
             if latent_batch_indices is not None:
                 past_key_values = _get_past_key_values_for_batch(batch_kv_cache, latent_batch_indices, ComputeRange(latent_compute_range.start+1, latent_compute_range.end, "latent"))
@@ -143,6 +146,7 @@ class DycoderWithKVCache(nn.Module):
                         position_ids=latent_position_ids,
                         output_hidden_states=True,
                         past_key_values=past_key_values,
+                        use_cache=True,
                     )
 
                     past_key_values = outputs.past_key_values
@@ -151,11 +155,19 @@ class DycoderWithKVCache(nn.Module):
                     
                     for idx, b in enumerate(latent_batch_indices):
                         batch_logits[b].append(outputs.logits[idx])
-                        batch_inputs_embeds[b][latent_id] = hidden_states[idx][-1, :] 
+                        if latent_id < latent_compute_range.end:
+                            batch_inputs_embeds[b][latent_id] = hidden_states[idx][-1, :]
+                    
+                    del outputs, latent_inputs_embeds, latent_attention_mask, latent_position_ids, hidden_states
                 
                 _cache_past_key_values_for_batch(batch_kv_cache, latent_batch_indices, past_key_values)
                 
+                del past_key_values
+                
                 self.gen_forward_cnt += (latent_compute_range.end - latent_compute_range.start)
+        
+        # Clean up KV cache
+        del batch_kv_cache
 
         logits_lst = []
         for b in range(input_ids.shape[0]):
@@ -201,7 +213,8 @@ class DycoderWithKVCache(nn.Module):
                 0, input_ids.shape[1], dtype=torch.long, device=input_ids.device
             ).reshape(1, -1),
         )
-        inputs_embeds = outputs.inputs_embeds
+        inputs_embeds = outputs.inputs_embeds.detach()
+        del outputs
         latent_mode = False
 
         # get other tokens
@@ -211,6 +224,7 @@ class DycoderWithKVCache(nn.Module):
             next_token = torch.argmax(outputs.logits[0, -1]).item()
             
             if next_token == self.eos_token_id:
+                del outputs
                 break
             
             if next_token == self.end_latent_id:
@@ -218,15 +232,16 @@ class DycoderWithKVCache(nn.Module):
                 new_token_embed = self.embedding(torch.tensor(next_token, device=input_ids.device)).view(1, 1, -1)
             elif latent_mode:
                 # replace with the preceding last hidden states
-                new_token_embed = outputs.hidden_states[-1][-1][-1].view(1, 1, -1)
+                new_token_embed = outputs.hidden_states[-1][-1][-1].detach().view(1, 1, -1)
             elif next_token == self.start_latent_id:
                 latent_mode = True
                 new_token_embed = self.embedding(torch.tensor(next_token, device=input_ids.device)).view(1, 1, -1)
             else:
                 new_token_embed = self.embedding(torch.tensor(next_token, device=input_ids.device)).view(1, 1, -1)
             
+            del outputs
             tokens.append(next_token)
-            inputs_embeds = torch.cat((inputs_embeds, new_token_embed), dim=1)
+            inputs_embeds = torch.cat((inputs_embeds, new_token_embed.detach()), dim=1)
 
         if output_embedding:
             # for analysis purpose

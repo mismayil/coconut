@@ -2,23 +2,18 @@
 
 project: dycoder
 save_path: /mnt/scratch/home/ismayilz/project-dycoder/models
-name: math-cot-qwen2.5-0.5b-e5
+name: math-dycoder-smollm2-135m-e5
 
 only_eval: False
 
-coconut: False
-cot: True
-no_thoughts: False
-no_cot: False
-
-c_thought: 0
+c_thought: 1
 epochs_per_stage: 1
 max_latent_stage: 0
 pad_latent_to_max: True
 
 save_only_improve: True
 uniform_prob: 0.0
-model_id: Qwen/Qwen2.5-0.5B
+model_id: HuggingFaceTB/SmolLM2-135M
 load_model_path: null
 seed: 0
 resume: 0
@@ -26,9 +21,10 @@ bf16: False
 train_path: data/math/math_train.json
 val_path: data/math/math_val.json
 reset_optimizer: False
-batch_size_training: 8
+batch_size_training: 4
 debug: False
-gradient_accumulation_steps: 4
+gradient_accumulation_steps: 8
 num_epochs: 5
 lr: !!float "1e-4"
 weight_decay: 0.01
+use_kv_cache: False

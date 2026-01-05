@@ -93,7 +93,7 @@ def main():
 
     elif configs.resume != 0:
         # by setting `resume`, we can skip a few epoches at the beginning.
-        if configs.load_model_path == "None":
+        if not configs.load_model_path:
             print(
                 f"Warning: you want to skip the first {configs.resume} but you are not loading any existing checkpoint!"
             )
@@ -114,7 +114,7 @@ def main():
 
     loaded = False
 
-    if configs.load_model_path != "None":
+    if configs.load_model_path:
         saved_weights = torch.load(
             configs.load_model_path, map_location=torch.device(rank)
         )
@@ -165,7 +165,7 @@ def main():
     if configs.coconut:
         model = Coconut(model, latent_id, start_id, end_id, tokenizer.eos_token_id)
 
-    if configs.load_model_path != "None" and not loaded:
+    if configs.load_model_path and not loaded:
         print(model.load_state_dict(saved_weights, strict=False))
 
     print(f"Running FSDP on rank = {rank}, world size = {world_size}")
@@ -215,7 +215,7 @@ def main():
     if "gsm" in configs.val_path:
         max_new_tokens = 64
     elif "math" in configs.val_path:
-        max_new_tokens = 2048
+        max_new_tokens = 1024
     else:
         max_new_tokens = 128
 

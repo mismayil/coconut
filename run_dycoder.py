@@ -1,6 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 
+import functools
 import torch
 import torch.optim as optim
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -8,6 +9,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 import wandb
 
 from dycoder import Dycoder
+from dycoder_with_kv_cache import DycoderWithKVCache
 from dataset import (
     get_dataset,
     get_question_latent_dataset,
@@ -27,6 +29,8 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 import torch.distributed as dist
 from torch.utils.data.distributed import DistributedSampler
+from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
+from transformers.models.qwen2.modeling_qwen2 import Qwen2DecoderLayer
 
 from utils import Config, set_seed
 
@@ -118,7 +122,12 @@ def main():
         lm_head = model.lm_head
         lm_head.weight.data[token_id] = lm_head.weight.data[target_id]
 
-    model = Dycoder(model, latent_id, start_id, end_id, tokenizer.eos_token_id)
+    use_kv_cache = getattr(configs, "use_kv_cache", False)
+
+    if use_kv_cache:
+        model = DycoderWithKVCache(model, latent_id, start_id, end_id, tokenizer.eos_token_id)
+    else:
+        model = Dycoder(model, latent_id, start_id, end_id, tokenizer.eos_token_id)
 
     if configs.load_model_path:
         saved_weights = torch.load(
@@ -131,6 +140,13 @@ def main():
     print(f"Running FSDP on rank = {rank}, world size = {world_size}")
     model = model.to(rank)
 
+    auto_wrap_policy = functools.partial(
+        transformer_auto_wrap_policy,
+        transformer_layer_cls={
+            Qwen2DecoderLayer
+        },
+    )
+
     if configs.bf16:
         model.to(torch.bfloat16)
 
@@ -140,7 +156,7 @@ def main():
 
     else:
         parallel_model = FSDP(
-            model, device_id=rank
+            model, device_id=rank, auto_wrap_policy=auto_wrap_policy
         )
 
     del model
@@ -167,7 +183,7 @@ def main():
     if "gsm" in configs.val_path:
         max_new_tokens = 64
     elif "math" in configs.val_path:
-        max_new_tokens = 2048
+        max_new_tokens = 1024
     else:
         max_new_tokens = 128
 
@@ -312,7 +328,12 @@ def main():
                 outputs = parallel_model(**batch)
 
                 loss = outputs.loss / configs.gradient_accumulation_steps
+                # Store loss value before backward and cleanup
+                loss_value = loss.detach().float() * configs.gradient_accumulation_steps
                 loss.backward()
+                
+                # Clean up to prevent memory accumulation
+                del outputs, batch, loss
 
                 if (step + 1) % configs.gradient_accumulation_steps == 0 or step == len(
                     train_dataloader
@@ -320,19 +341,22 @@ def main():
                     optimizer.step()
                     optimizer.zero_grad()
                     pbar.update(1)
+                    # Periodic memory cleanup
+                    if (step + 1) % (configs.gradient_accumulation_steps * 10) == 0:
+                        gc.collect()
+                        torch.cuda.empty_cache()
 
                 if wandb_run and rank == 0:
                     log_dict = {
                         "train/epoch": epoch + 1,
                         "train/step": epoch * len(train_dataloader) + step,
-                        "train/loss": loss.detach().float()
-                        * configs.gradient_accumulation_steps,
+                        "train/loss": loss_value,
                     }
                     wandb_run.log(log_dict)
 
                 pbar.set_description(
                     f"Training Epoch: {epoch+1}/{configs.num_epochs}, batch {step}/{len(train_dataloader)} "
-                    f"completed (loss: {round(float(loss.detach().float() * configs.gradient_accumulation_steps), 4)}"
+                    f"completed (loss: {round(float(loss_value), 4)}"
                 )
             pbar.close()
             dist.barrier()
@@ -369,6 +393,11 @@ def main():
                     loss = outputs.loss
                     dist.all_reduce(loss, op=dist.ReduceOp.SUM)
                     total_loss += loss.item()
+                    
+                    del outputs, batch, loss
+                
+                gc.collect()
+                torch.cuda.empty_cache()
 
                 if wandb_run and rank == 0:
 
@@ -432,6 +461,8 @@ def main():
 
                 cor += answer_output == answer
                 cor_cot += cot_output == answer_cot
+                
+                del outputs, batch
 
                 pbar.update(1)
                 pbar.set_description(
@@ -440,6 +471,9 @@ def main():
 
             pbar.close()
             print(f"Device {rank}: Cor={cor}, CoT={cor_cot}, Total={total}")
+            
+            gc.collect()
+            torch.cuda.empty_cache()
 
         dist.all_reduce(cor_cot, op=dist.ReduceOp.SUM)
         dist.all_reduce(cor, op=dist.ReduceOp.SUM)
