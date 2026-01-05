@@ -7,8 +7,8 @@ name: math-dycoder-qwen2.5-0.5b-e5
 only_eval: False
 
 c_thought: 1
-epochs_per_stage: 1
-max_latent_stage: 0
+epochs_per_stage: 5
+max_latent_stage: 5
 pad_latent_to_max: True
 
 save_only_improve: True
