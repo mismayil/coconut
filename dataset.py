@@ -34,6 +34,7 @@ def get_dataset(path, tokenizer, max_size=1000000000, max_length=None):
             "steps_tokenized": steps_tokenized,
             "answer_tokenized": answer_tokenized,
             "idx": sample["idx"],
+            "steps_difficulties": sample.get("steps_difficulties", [1]*len(sample["steps"])),
         }
         return sample
 
@@ -343,6 +344,7 @@ def get_interleaving_cot_latent_dataset(
     no_special_marker=False,
     shuffle=False,
     max_length=1024,
+    use_difficulty=False,
 ):
     def process_dataset(sample):
 
@@ -357,8 +359,12 @@ def get_interleaving_cot_latent_dataset(
 
         step_tokens = []
 
-        steps_difficulties = sample.get("steps_difficulties", [1]*len(sample["steps_tokenized"]))
-        # steps_difficulties = [random.randint(1, 4) for _ in range(len(sample["steps_tokenized"]))]
+        if use_difficulty:
+            assert "steps_difficulties" in sample, "Dataset must contain step difficulties for this mode."
+            steps_difficulties = sample["steps_difficulties"]
+        else:
+            steps_difficulties = [1]*len(sample["steps_tokenized"])
+
         for step_tokenized, difficulty in zip(sample["steps_tokenized"], steps_difficulties):
             step_tokens.append(step_tokenized + ([] if no_special_marker else [start_id]) + [latent_id] * difficulty * configs.c_thought * scheduled_stage_to_train + ([] if no_special_marker else [end_id]))
         

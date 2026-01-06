@@ -2,7 +2,7 @@
 
 project: dycoder
 save_path: /mnt/scratch/home/ismayilz/project-dycoder/models
-name: math-dycoder-smollm2-135m-e5
+name: math-dycoder-smollm2-135m-e5-with-diff
 
 only_eval: False
 
@@ -11,7 +11,7 @@ epochs_per_stage: 5
 max_latent_stage: 5
 pad_latent_to_max: True
 
-save_only_improve: True
+save_only_improve: False
 uniform_prob: 0.0
 model_id: HuggingFaceTB/SmolLM2-135M
 load_model_path: null
@@ -28,3 +28,4 @@ num_epochs: 5
 lr: !!float "1e-4"
 weight_decay: 0.01
 use_kv_cache: False
+use_difficulty: True

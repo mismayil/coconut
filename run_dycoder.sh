@@ -13,7 +13,10 @@ echo "Number of GPUs available: $num_gpus"
 # torchrun --nnodes 1 --nproc_per_node $num_gpus run_dycoder.py configs/dycoder/math_dycoder_qwen2.5-0.5b.yaml
 
 # MATH smollm 2 135M training
-torchrun --nnodes 1 --nproc_per_node $num_gpus run_dycoder.py configs/dycoder/math_dycoder_smollm2_135m.yaml
+# torchrun --nnodes 1 --nproc_per_node $num_gpus run_dycoder.py configs/dycoder/math_dycoder_smollm2_135m.yaml
+
+# MATH smollm 2 135M training with difficulty-based latent tokens
+torchrun --nnodes 1 --nproc_per_node $num_gpus run_dycoder.py configs/dycoder/math_dycoder_smollm2_135m_with_diff.yaml
 
 # debugging
 # python -m debugpy --listen 5678 --wait-for-client run_dycoder.py configs/dycoder/gsm_dycoder.yaml

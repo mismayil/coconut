@@ -242,6 +242,7 @@ def main():
                 latent_id,
                 end_id,
                 shuffle=True,
+                use_difficulty=getattr(configs, "use_difficulty", False),
             )
 
             train_dataloader = torch.utils.data.DataLoader(
@@ -264,6 +265,7 @@ def main():
                 start_id,
                 latent_id,
                 end_id,
+                use_difficulty=getattr(configs, "use_difficulty", False),
             )
 
             valid_loss_dataloader = torch.utils.data.DataLoader(
