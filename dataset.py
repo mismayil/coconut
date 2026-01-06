@@ -14,7 +14,7 @@ from transformers import PreTrainedTokenizerBase
 from transformers.data.data_collator import pad_without_fast_tokenizer_warning
 
 
-def get_dataset(path, tokenizer, max_size=1000000000):
+def get_dataset(path, tokenizer, max_size=1000000000, max_length=None):
 
     def tokenize_sample(sample):
 
@@ -236,6 +236,7 @@ def get_cot_latent_dataset(
     end_id,
     no_special_marker=False,
     shuffle=False,
+    max_length=1024,
 ):
 
     n_additional_tokens = 0 if no_special_marker else 2
@@ -308,6 +309,10 @@ def get_cot_latent_dataset(
             )
             if shuffle:
                 processed_dataset = processed_dataset.shuffle()
+            if max_length is not None:
+                processed_dataset = processed_dataset.filter(
+                    lambda example: len(example["input_ids"]) <= max_length
+                )
             processed_dataset = [processed_dataset]
         else:
             processed_dataset = [None]
@@ -320,6 +325,10 @@ def get_cot_latent_dataset(
         )
         if shuffle:
             processed_dataset = processed_dataset.shuffle()
+        if max_length is not None:
+            processed_dataset = processed_dataset.filter(
+                lambda example: len(example["input_ids"]) <= max_length
+            )
         dataset = processed_dataset
 
     return dataset
@@ -333,6 +342,7 @@ def get_interleaving_cot_latent_dataset(
     end_id,
     no_special_marker=False,
     shuffle=False,
+    max_length=1024,
 ):
     def process_dataset(sample):
 
@@ -377,6 +387,10 @@ def get_interleaving_cot_latent_dataset(
             )
             if shuffle:
                 processed_dataset = processed_dataset.shuffle()
+            if max_length is not None:
+                processed_dataset = processed_dataset.filter(
+                    lambda example: len(example["input_ids"]) <= max_length
+                )
             processed_dataset = [processed_dataset]
         else:
             processed_dataset = [None]
@@ -389,6 +403,10 @@ def get_interleaving_cot_latent_dataset(
         )
         if shuffle:
             processed_dataset = processed_dataset.shuffle()
+        if max_length is not None:
+            processed_dataset = processed_dataset.filter(
+                lambda example: len(example["input_ids"]) <= max_length
+            )
         dataset = processed_dataset
 
     return dataset

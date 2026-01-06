@@ -171,13 +171,13 @@ def main():
     print(f"Running FSDP on rank = {rank}, world size = {world_size}")
     model = model.to(rank)
 
-    llama_auto_wrap_policy = functools.partial(
-        transformer_auto_wrap_policy,
-        transformer_layer_cls={
-            # GPT2Block,       # for GPT2, we don't need to shard layers (it becomes DDP)
-            LlamaDecoderLayer  # only shard llama's layers.
-        },
-    )
+    # llama_auto_wrap_policy = functools.partial(
+    #     transformer_auto_wrap_policy,
+    #     transformer_layer_cls={
+    #         # GPT2Block,       # for GPT2, we don't need to shard layers (it becomes DDP)
+    #         LlamaDecoderLayer  # only shard llama's layers.
+    #     },
+    # )
 
     if configs.bf16:
         model.to(torch.bfloat16)
@@ -188,7 +188,7 @@ def main():
 
     else:
         parallel_model = FSDP(
-            model, auto_wrap_policy=llama_auto_wrap_policy, device_id=rank
+            model, device_id=rank
         )
 
     del model

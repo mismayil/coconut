@@ -140,12 +140,12 @@ def main():
     print(f"Running FSDP on rank = {rank}, world size = {world_size}")
     model = model.to(rank)
 
-    auto_wrap_policy = functools.partial(
-        transformer_auto_wrap_policy,
-        transformer_layer_cls={
-            Qwen2DecoderLayer
-        },
-    )
+    # auto_wrap_policy = functools.partial(
+    #     transformer_auto_wrap_policy,
+    #     transformer_layer_cls={
+    #         Qwen2DecoderLayer
+    #     },
+    # )
 
     if configs.bf16:
         model.to(torch.bfloat16)
@@ -156,7 +156,7 @@ def main():
 
     else:
         parallel_model = FSDP(
-            model, device_id=rank, auto_wrap_policy=auto_wrap_policy
+            model, device_id=rank
         )
 
     del model
