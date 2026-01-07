@@ -1,0 +1,29 @@
+# need 4 gpus
+
+project: dycoder
+save_path: /mnt/scratch/home/ismayilz/project-dycoder/models
+name: prosqa-dycoder-gpt2-e5
+
+only_eval: True
+
+c_thought: 1
+epochs_per_stage: 5
+max_latent_stage: 5
+pad_latent_to_max: True
+
+save_only_improve: True
+uniform_prob: 0.0
+model_id: openai-community/gpt2
+load_model_path: /mnt/scratch/home/ismayilz/project-dycoder/models/prosqa-dycoder-gpt2-e5/checkpoint_4
+seed: 0
+resume: 0
+bf16: False
+train_path: data/prosqa/prosqa_train.json
+val_path: data/prosqa/prosqa_test.json
+reset_optimizer: True
+batch_size_training: 8
+debug: False
+gradient_accumulation_steps: 8
+num_epochs: 5
+lr: !!float "1e-4"
+weight_decay: 0.01

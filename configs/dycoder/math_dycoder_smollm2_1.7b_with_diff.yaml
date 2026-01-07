@@ -1,0 +1,32 @@
+# need 4 gpus
+
+project: dycoder
+save_path: /mnt/scratch/home/ismayilz/project-dycoder/models
+name: math-dycoder-smollm2-1.7b-e5-with-diff
+
+only_eval: False
+
+c_thought: 1
+epochs_per_stage: 5
+max_latent_stage: 5
+pad_latent_to_max: True
+
+save_only_improve: True
+uniform_prob: 0.0
+model_id: HuggingFaceTB/SmolLM2-1.7B
+load_model_path: null
+seed: 0
+resume: 0
+bf16: True
+train_path: data/math/math_train.json
+val_path: data/math/math_val.json
+reset_optimizer: False
+batch_size_training: 1
+debug: False
+gradient_accumulation_steps: 32
+num_epochs: 5
+lr: !!float "1e-4"
+weight_decay: 0.01
+use_kv_cache: False
+use_difficulty: True
+max_length: 512

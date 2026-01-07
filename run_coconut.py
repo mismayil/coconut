@@ -215,7 +215,7 @@ def main():
     if "gsm" in configs.val_path:
         max_new_tokens = 64
     elif "math" in configs.val_path:
-        max_new_tokens = 1024
+        max_new_tokens = getattr(configs, "max_length", 1024)
     else:
         max_new_tokens = 128
 
@@ -278,6 +278,7 @@ def main():
                 end_id,
                 no_special_marker=configs.cot or configs.no_cot or configs.no_thoughts,
                 shuffle=True,
+                max_length=getattr(configs, "max_length", 1024)
             )
 
             train_dataloader = torch.utils.data.DataLoader(
@@ -301,6 +302,7 @@ def main():
                 latent_id,
                 end_id,
                 no_special_marker=configs.cot or configs.no_cot or configs.no_thoughts,
+                max_length=getattr(configs, "max_length", 1024)
             )
 
             valid_loss_dataloader = torch.utils.data.DataLoader(

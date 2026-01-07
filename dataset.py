@@ -366,12 +366,12 @@ def get_interleaving_cot_latent_dataset(
             steps_difficulties = [1]*len(sample["steps_tokenized"])
 
         for step_tokenized, difficulty in zip(sample["steps_tokenized"], steps_difficulties):
-            step_tokens.append(step_tokenized + ([] if no_special_marker else [start_id]) + [latent_id] * difficulty * configs.c_thought * scheduled_stage_to_train + ([] if no_special_marker else [end_id]))
+            step_tokens.append(step_tokenized + ([] if no_special_marker else [start_id]) + [latent_id] * configs.c_thought * min(difficulty, scheduled_stage_to_train, configs.max_latent_stage) + ([] if no_special_marker else [end_id]))
         
         tokens = (
             sample["question_tokenized"]
             + ([] if no_special_marker else [start_id])
-            + [latent_id] * configs.c_thought * scheduled_stage_to_train
+            + [latent_id] * configs.c_thought * min(scheduled_stage_to_train, configs.max_latent_stage)
             + ([] if no_special_marker else [end_id])
             + list(itertools.chain.from_iterable(step_tokens))
             + sample["answer_tokenized"]
