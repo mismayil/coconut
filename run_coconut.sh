@@ -15,6 +15,9 @@ echo "Number of GPUs available: $num_gpus"
 # MATH coconut qwen 2.5 0.5B training
 # torchrun --nnodes 1 --nproc_per_node $num_gpus run_coconut.py configs/coconut/math_coconut_qwen2.5-0.5b.yaml
 
+# MATH coconut qwen 2.5 0.5B evaluation
+torchrun --nnodes 1 --nproc_per_node $num_gpus run_coconut.py configs/coconut/math_coconut_qwen2.5-0.5b_eval.yaml
+
 # MATH cot smollm 2 135M training
 # torchrun --nnodes 1 --nproc_per_node $num_gpus run_coconut.py configs/coconut/math_cot_smollm2_135m.yaml
 
@@ -25,4 +28,4 @@ echo "Number of GPUs available: $num_gpus"
 # torchrun --nnodes 1 --nproc_per_node $num_gpus run_coconut.py configs/coconut/math_coconut_smollm2_135m.yaml
 
 # MATH coconut smollm 2 135M evaluation
-torchrun --nnodes 1 --nproc_per_node $num_gpus run_coconut.py configs/coconut/math_coconut_smollm2_135m_eval.yaml
+# torchrun --nnodes 1 --nproc_per_node $num_gpus run_coconut.py configs/coconut/math_coconut_smollm2_135m_eval.yaml

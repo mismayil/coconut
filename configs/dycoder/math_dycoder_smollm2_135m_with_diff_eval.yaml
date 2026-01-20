@@ -2,7 +2,7 @@
 
 project: dycoder
 save_path: /mnt/scratch/home/ismayilz/project-dycoder/models
-name: math-dycoder-smollm2-135m-e5-with-diff
+name: math-dycoder-smollm2-135m-e5-with-diff-v3
 
 only_eval: True
 
@@ -14,7 +14,7 @@ pad_latent_to_max: True
 save_only_improve: True
 uniform_prob: 0.0
 model_id: HuggingFaceTB/SmolLM2-135M
-load_model_path: /mnt/scratch/home/ismayilz/project-dycoder/models/math-dycoder-smollm2-135m-e5-with-diff/checkpoint_5
+load_model_path: /mnt/scratch/home/ismayilz/project-dycoder/models/math-dycoder-smollm2-135m-e5-with-diff-v3/checkpoint_4
 seed: 0
 resume: 0
 bf16: False

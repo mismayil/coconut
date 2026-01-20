@@ -10,7 +10,10 @@ echo "Number of GPUs available: $num_gpus"
 # torchrun --nnodes 1 --nproc_per_node $num_gpus run_dycoder.py configs/dycoder/gsm_dycoder_gpt2_eval.yaml
 
 # MATH qwen 2.5 0.5B training
-# torchrun --nnodes 1 --nproc_per_node $num_gpus run_dycoder.py configs/dycoder/math_dycoder_qwen2.5-0.5b.yaml
+# torchrun --nnodes 1 --nproc_per_node $num_gpus run_dycoder.py configs/dycoder/math_dycoder_qwen2.5-0.5b_with_diff.yaml
+
+# MATH qwen 2.5 0.5B evaluation
+torchrun --nnodes 1 --nproc_per_node $num_gpus run_dycoder.py configs/dycoder/math_dycoder_qwen2.5-0.5b_with_diff_eval.yaml
 
 # MATH smollm 2 135M training
 # torchrun --nnodes 1 --nproc_per_node $num_gpus run_dycoder.py configs/dycoder/math_dycoder_smollm2_135m.yaml
@@ -19,7 +22,7 @@ echo "Number of GPUs available: $num_gpus"
 # torchrun --nnodes 1 --nproc_per_node $num_gpus run_dycoder.py configs/dycoder/math_dycoder_smollm2_135m_eval.yaml
 
 # MATH smollm 2 135M training with difficulty-based latent tokens
-torchrun --nnodes 1 --nproc_per_node $num_gpus run_dycoder.py configs/dycoder/math_dycoder_smollm2_135m_with_diff.yaml
+# torchrun --nnodes 1 --nproc_per_node $num_gpus run_dycoder.py configs/dycoder/math_dycoder_smollm2_135m_with_diff.yaml
 
 # MATH smollm 2 135M evaluation with difficulty-based latent tokens
 # torchrun --nnodes 1 --nproc_per_node $num_gpus run_dycoder.py configs/dycoder/math_dycoder_smollm2_135m_with_diff_eval.yaml

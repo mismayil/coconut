@@ -2,12 +2,12 @@
 
 project: dycoder
 save_path: /mnt/scratch/home/ismayilz/project-dycoder/models
-name: math-dycoder-qwen2.5-0.5b-e5
+name: math-dycoder-qwen2.5-0.5b-e5-with-diff
 
 only_eval: False
 
 c_thought: 1
-epochs_per_stage: 5
+epochs_per_stage: 1
 max_latent_stage: 5
 pad_latent_to_max: True
 
@@ -17,14 +17,15 @@ model_id: Qwen/Qwen2.5-0.5B
 load_model_path: null
 seed: 0
 resume: 0
-bf16: False
+bf16: True
 train_path: data/math/math_train.json
 val_path: data/math/math_val.json
 reset_optimizer: False
-batch_size_training: 4
+batch_size_training: 1
 debug: False
-gradient_accumulation_steps: 8
+gradient_accumulation_steps: 16
 num_epochs: 5
 lr: !!float "1e-4"
 weight_decay: 0.01
-use_kv_cache: True
+use_kv_cache: False
+use_difficulty: True

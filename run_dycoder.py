@@ -423,6 +423,8 @@ def main():
             torch.tensor(0, device=rank),
         )
 
+        val_latents = []
+
         with torch.no_grad():
             parallel_model.module.eval()
             for idx, batch in enumerate(valid_gen_dataloader):
@@ -443,11 +445,12 @@ def main():
                 total += 1
 
                 # synced_gpus=True in FSDP mode, as we need to keep # forward pass the same on each device
-                outputs = parallel_model.module.generate(
+                outputs, latents = parallel_model.module.generate(
                     **batch,
                     max_new_tokens=max_new_tokens,
                     synced_gpus=not configs.only_eval,
                 )
+                val_latents.append({"id": test_idx.cpu().item(), "latents": latents})
 
                 text_output = tokenizer.decode(outputs[0], skip_special_tokens=True)
                 answer_output = text_output.split("#")[-1].replace(",", "").strip()
@@ -493,6 +496,13 @@ def main():
 
         if wandb_run:
             wandb_run.log({"eval/acc": cor / total, "eval/cot_em": cor_cot / total})
+
+        # save the latents
+        if rank == 0 and val_latents:
+            with open(
+                os.path.join(save_dir, f"latents_epoch_{epoch+1}.json"), "w"
+            ) as f:
+                json.dump(val_latents, f)
 
         if configs.only_eval:
             break

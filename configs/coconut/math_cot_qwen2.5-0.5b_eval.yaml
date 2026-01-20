@@ -19,7 +19,7 @@ pad_latent_to_max: True
 save_only_improve: True
 uniform_prob: 0.0
 model_id: Qwen/Qwen2.5-0.5B
-load_model_path: /mnt/scratch/home/ismayilz/project-dycoder/models/math-cot-qwen2.5-0.5b-e5/checkpoint_4
+load_model_path: /mnt/scratch/home/ismayilz/project-dycoder/models/math-cot-qwen2.5-0.5b-e5/checkpoint_3
 seed: 0
 resume: 0
 bf16: False

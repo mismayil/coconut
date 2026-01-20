@@ -3,6 +3,7 @@
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.nn import CrossEntropyLoss
 from collections import namedtuple
 from transformers.models.gpt2 import GPT2LMHeadModel
@@ -25,6 +26,7 @@ class Dycoder(nn.Module):
         start_latent_id,
         end_latent_id,
         eos_token_id,
+        latent_persist_weight=0.1,
     ):
 
         super(Dycoder, self).__init__()
@@ -34,6 +36,7 @@ class Dycoder(nn.Module):
         self.eos_token_id = eos_token_id
         self.start_latent_id = start_latent_id
         self.end_latent_id = end_latent_id
+        self.latent_persist_weight = latent_persist_weight
 
         # tested with GPT2 and Llama3
         if isinstance(self.base_causallm, GPT2LMHeadModel):
@@ -43,6 +46,8 @@ class Dycoder(nn.Module):
 
     def forward(self, input_ids, attention_mask, labels, position_ids, **kwargs):
         batch_compute_ranges = []
+        latent_persist_loss = 0.0
+        latent_persist_count = 0
 
         for b in range(input_ids.shape[0]):
             compute_ranges = []
@@ -118,6 +123,14 @@ class Dycoder(nn.Module):
                             batch_inputs_embeds[b][latent_id + 1:]
                         ], dim=0)
                         batch_logits[b] = outputs.logits[idx]
+                        
+                        # ---------- NEW: latent persistence loss ----------
+                        end_latent_prob = torch.softmax(
+                            outputs.logits[idx, latent_id - 1], dim=-1
+                        )[self.end_latent_id]
+
+                        latent_persist_loss += end_latent_prob
+                        latent_persist_count += 1
                     
                     del outputs, latent_inputs_embeds, latent_attention_mask, latent_position_ids, hidden_states
 
@@ -127,9 +140,19 @@ class Dycoder(nn.Module):
         shift_logits = logits[..., :-1, :].contiguous()
         shift_labels = labels[..., 1:].contiguous()
         loss_fct = CrossEntropyLoss()
-        loss = loss_fct(
-            shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1)
+        # loss = loss_fct(
+        #     shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1)
+        # )
+        ce_loss = loss_fct(
+            shift_logits.view(-1, shift_logits.size(-1)),
+            shift_labels.view(-1)
         )
+
+        if latent_persist_count > 0:
+            latent_persist_loss = latent_persist_loss / latent_persist_count
+            loss = ce_loss + self.latent_persist_weight * latent_persist_loss
+        else:
+            loss = ce_loss
 
         return Outputs(loss=loss, inputs_embeds=inputs_embeds, logits=logits)
 
@@ -167,6 +190,8 @@ class Dycoder(nn.Module):
         inputs_embeds = outputs.inputs_embeds.detach()  # Detach to prevent graph accumulation
         del outputs
         latent_mode = False
+        num_latents = 0
+        latents = []
 
         # get other tokens
         for _ in range(max_new_tokens):
@@ -179,9 +204,12 @@ class Dycoder(nn.Module):
                 break
             
             if next_token == self.end_latent_id:
+                latents.append(num_latents)
+                num_latents = 0
                 latent_mode = False
                 new_token_embed = self.embedding(torch.tensor(next_token, device=input_ids.device)).view(1, 1, -1)
             elif latent_mode:
+                num_latents += 1
                 # replace with the preceding last hidden states
                 new_token_embed = outputs.hidden_states[-1][-1][-1].detach().view(1, 1, -1)
             elif next_token == self.start_latent_id:
@@ -196,6 +224,6 @@ class Dycoder(nn.Module):
 
         if output_embedding:
             # for analysis purpose
-            return torch.tensor(tokens).view(1, -1), inputs_embeds
+            return torch.tensor(tokens).view(1, -1), inputs_embeds, latents
         else:
-            return torch.tensor(tokens).view(1, -1)
+            return torch.tensor(tokens).view(1, -1), latents
