@@ -197,5 +197,4 @@ cython_debug/
 
 .vscode/
 wandb/
-data/
 .DS_Store
