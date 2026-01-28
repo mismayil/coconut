@@ -20,4 +20,8 @@ pip install -r requirements.txt
 - `run_dycoder.py`: Script for training DyCODER models.
 - `run_dycoder.sh`: Script containing commands to reproduce our experiments with DyCODER models.
 - `configs`: Directory containing training and evaluation configurations for both COCONUT and DYCODER models.
-- `data/math_full_classification_results.zip`: Results of the MATH dataset preparation pipeline containing the annotated steps and the step difficulties.
+- `data`: Directory containing the training and evaluation data for GSM, ProsQA and MATH datasets.
+- `docker`: Directory containing docker deployment scripts.
+- `figures`: Directory containing various figures used in the report.
+- `preprocessing`: Directory containing data preprocessing scripts. `math_annotation.py` and `math.py` particularly contains our preprocessing steps for annotation with DeepSeek and final dataset preparation.
+- `analysis.ipynb`: Notebook containing analysis code for MATH dataset.

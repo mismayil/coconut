@@ -1,0 +1,492 @@
+import pandas as pd
+import requests
+import json
+import time
+import logging
+import hashlib
+import os
+from tqdm import tqdm
+import re
+from typing import List, Dict, Optional, Tuple
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+class MathStepClassifier:
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.base_url = "https://api.deepseek.com/v1/chat/completions"
+
+        self.total_input_tokens = 0
+        self.total_output_tokens = 0
+        self.total_cost = 0.0 #to calculate the cost
+
+        self.input_price = 0.14 / 1000000  # $0.14 per 1M tokens
+        self.output_price = 0.28 / 1000000  # $0.28 per 1M tokens
+
+        self.api_calls = 0
+        self.api_errors = 0
+        self.rule_based_classifications = 0
+
+    def estimate_tokens(self, text: str) -> int:
+        """Rough token estimation (1 token ≈ 4 chars for English)"""
+        return len(text) // 4 + 1
+
+    def classify_single_step(self, problem: str, step: str, step_num: int) -> Dict:
+        """
+        Classify one step with 4 difficulty levels
+        Returns dictionary with classification
+        """
+
+        prompt = f"""You are a math education expert. Classify this math solution step's difficulty.
+
+PROBLEM: {problem}
+STEP (Step {step_num}): {step}
+
+DIFFICULTY LEVELS:
+1. TRIVIAL - Recalling formulas, restating given information
+2. SIMPLE - Simple arithmetic, direct substitution, basic formula application
+3. INTERMEDIATE - One conceptual insight, multi-step reasoning, non-trivial concepts
+4. ADVANCED - Multiple insights, complex reasoning, synthesis of multiple concepts
+
+Return ONLY a JSON object with this exact format:
+{{
+    "difficulty_level": 1 or 2 or 3 or 4,
+    "difficulty_name": "Trivial" or "Simple" or "Intermediate" or "Advanced",
+    "explanation": "1-2 sentence explanation"
+}}
+"""
+
+        input_tokens = self.estimate_tokens(prompt) #for cost tracking
+        self.total_input_tokens += input_tokens
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "model": "deepseek-chat",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a precise classifier. Always return valid JSON."
+                },
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.1,
+            "max_tokens": 100,
+            "response_format": {"type": "json_object"}
+        }
+
+        try:
+            self.api_calls += 1
+            response = requests.post(
+                self.base_url,
+                headers=headers,
+                json=payload,
+                timeout=30
+            )
+            response.raise_for_status()
+
+            result = response.json()
+            classification = json.loads(result["choices"][0]["message"]["content"])
+
+            # Track output tokens and cost
+            output_tokens = result["usage"]["completion_tokens"]
+            self.total_output_tokens += output_tokens
+
+            step_cost = (input_tokens * self.input_price) + (output_tokens * self.output_price)
+            self.total_cost += step_cost
+
+            level = classification.get("difficulty_level", 3)
+            if level not in [1, 2, 3, 4]:
+                level = 3
+
+            level_names = {
+                1: "Trivial",
+                2: "Simple",
+                3: "Intermediate",
+                4: "Advanced"
+            }
+
+            return {
+                "step_number": step_num,
+                "step_text": step,
+                "difficulty_level": level,
+                "difficulty_name": level_names.get(level, "Intermediate"),
+                "explanation": classification.get("explanation", ""),
+                "source": "api"
+            }
+
+        except Exception as e:
+            self.api_errors += 1
+            logger.debug(f"API error for step {step_num}: {e}")
+            return self.rule_based_classification(step, step_num)
+
+    def rule_based_classification(self, step: str, step_num: int) -> Dict:
+        """Fallback rule-based classification when API fails"""
+        self.rule_based_classifications += 1
+
+        step_lower = step.lower()
+
+        # Trivial patterns (Level 1)
+        trivial_patterns = [
+            r'recall', r'remember', r'formula', r'definition', r'given that',
+            r'we know', r'as stated', r'from the problem', r'let ', r'define ',
+            r'denote ', r'note that', r'according to'
+        ]
+
+        # Simple patterns (Level 2)
+        simple_patterns = [
+            r'substitute', r'plug in', r'calculate', r'compute', r'evaluate',
+            r'solve for', r'find', r' = ', r'equals', r'answer is',
+            r'result is', r' \+ ', r' \- ', r' \* ', r' / ', r'\^', r'sqrt'
+        ]
+
+        # Advanced patterns (Level 4)
+        advanced_patterns = [
+            r'therefore', r'thus', r'hence', r'implies', r'conclude',
+            r'prove', r'show that', r'demonstrate', r'verify', r'it follows',
+            r'observe that', r'notice that', r'consider', r'apply',
+            r'using', r'by applying', r'theorem', r'lemma', r'corollary',
+            r'since', r'because', r'as', r'due to'
+        ]
+
+        for pattern in trivial_patterns:
+            if re.search(pattern, step_lower):
+                return {
+                    "step_number": step_num,
+                    "step_text": step,
+                    "difficulty_level": 1,
+                    "difficulty_name": "Trivial",
+                    "explanation": "Rule-based: Contains recall/restatement pattern",
+                    "source": "rules"
+                }
+
+        for pattern in simple_patterns:
+            if re.search(pattern, step_lower):
+                return {
+                    "step_number": step_num,
+                    "step_text": step,
+                    "difficulty_level": 2,
+                    "difficulty_name": "Simple",
+                    "explanation": "Rule-based: Contains simple operation pattern",
+                    "source": "rules"
+                }
+
+        for pattern in advanced_patterns:
+            if re.search(pattern, step_lower):
+                return {
+                    "step_number": step_num,
+                    "step_text": step,
+                    "difficulty_level": 4,
+                    "difficulty_name": "Advanced",
+                    "explanation": "Rule-based: Contains advanced reasoning pattern",
+                    "source": "rules"
+                }
+
+        # Default to Intermediate (Level 3)
+        return {
+            "step_number": step_num,
+            "step_text": step,
+            "difficulty_level": 3,
+            "difficulty_name": "Intermediate",
+            "explanation": "Rule-based: Default classification - requires some reasoning",
+            "source": "rules"
+        }
+
+    def classify_problem_steps(self, problem: str, steps: List[str]) -> List[Dict]:
+        """Classify all steps for one problem"""
+        classifications = []
+
+        for i, step in enumerate(steps, 1):
+            classification = self.classify_single_step(problem, step, i)
+            classifications.append(classification)
+
+            time.sleep(0.1)
+
+        return classifications
+
+    def print_cost_summary(self):
+        """Print cost summary"""
+        print("\n" + "="*60)
+        print("COST & PERFORMANCE SUMMARY")
+        print("="*60)
+        print(f"API Calls: {self.api_calls:,}")
+        print(f"API Errors: {self.api_errors:,}")
+        print(f"Rule-based classifications: {self.rule_based_classifications:,}")
+
+        if self.api_calls > 0:
+            success_rate = (self.api_calls - self.api_errors) / self.api_calls * 100
+            print(f"API Success Rate: {success_rate:.1f}%")
+
+        print(f"\nTotal Input Tokens: {self.total_input_tokens:,}")
+        print(f"Total Output Tokens: {self.total_output_tokens:,}")
+        print(f"Total Tokens: {self.total_input_tokens + self.total_output_tokens:,}")
+        print(f"\nEstimated Cost: ${self.total_cost:.6f}")
+        print(f"  - Input: ${self.total_input_tokens * self.input_price:.6f}")
+        print(f"  - Output: ${self.total_output_tokens * self.output_price:.6f}")
+
+        print("="*60)
+
+def parse_steps(steps_str: str) -> List[str]:
+    """Parse steps string into list"""
+    if pd.isna(steps_str):
+        return []
+
+    steps_str = str(steps_str).strip()
+
+
+    if steps_str.startswith('[') and steps_str.endswith(']'):
+        try:
+
+            steps_str = steps_str[1:-1]
+
+            steps = []
+            current = ""
+            in_quotes = False
+
+            for char in steps_str:
+                if char == "'" and not in_quotes:
+                    in_quotes = True
+                elif char == "'" and in_quotes:
+                    in_quotes = False
+                    steps.append(current)
+                    current = ""
+                elif char == ',' and not in_quotes:
+                    if current.strip():
+                        steps.append(current.strip())
+                    current = ""
+                else:
+                    current += char
+
+            if current.strip():
+                steps.append(current.strip())
+
+            return [s.strip("'\" ") for s in steps if s.strip()]
+        except:
+            pass
+
+    for separator in ["', '", "', '", "; ", " | ", " -> "]:
+        if separator in steps_str:
+            return [s.strip().strip("'\"") for s in steps_str.split(separator) if s.strip()]
+
+    return [steps_str]
+
+def run_full_dataset(input_csv: str, api_key: str, output_csv: str = "full_classification_results.csv"):
+    """
+    Run classification on full dataset
+    """
+
+    logger.info(f"Reading CSV: {input_csv}")
+    df = pd.read_csv(input_csv)
+
+    df_sample = df.copy()
+
+    total_problems = len(df_sample)
+    logger.info(f"Processing FULL dataset: {total_problems:,} problems")
+
+    classifier = MathStepClassifier(api_key)
+
+    results = []
+    start_time = time.time()
+
+    for idx, row in tqdm(df_sample.iterrows(), total=total_problems, desc="Processing"):
+        try:
+
+            steps = parse_steps(row.get('steps', ''))
+
+            if not steps:
+                logger.warning(f"Row {idx}: No steps found")
+                continue
+
+            classifications = classifier.classify_problem_steps(
+                problem=str(row.get('problem', '')),
+                steps=steps
+            )
+
+            result = {
+                'original_index': idx,
+                'problem': row.get('problem', ''),
+                'problem_level': row.get('level', ''),
+                'problem_type': row.get('type', ''),
+                'original_steps': str(row.get('steps', '')),
+                'num_steps': len(steps),
+            }
+
+            step_texts = []
+            difficulty_levels = []
+            difficulty_names = []
+            explanations = []
+            sources = []
+
+            for cls in classifications:
+                step_texts.append(cls['step_text'])
+                difficulty_levels.append(cls['difficulty_level'])
+                difficulty_names.append(cls['difficulty_name'])
+                explanations.append(cls['explanation'])
+                sources.append(cls.get('source', 'unknown'))
+
+            result['step_texts'] = ' | '.join(step_texts)
+            result['difficulty_levels'] = ';'.join(map(str, difficulty_levels))
+            result['difficulty_names'] = ';'.join(difficulty_names)
+            result['explanations'] = ' | '.join(explanations)
+            result['classification_sources'] = ';'.join(sources)
+
+            if difficulty_levels: #to check if results are unbalanced
+                level_counts = {
+                    1: difficulty_levels.count(1),
+                    2: difficulty_levels.count(2),
+                    3: difficulty_levels.count(3),
+                    4: difficulty_levels.count(4)
+                }
+
+                for level in range(1, 5):
+                    result[f'level_{level}_count'] = level_counts[level]
+                    result[f'level_{level}_pct'] = (level_counts[level] / len(difficulty_levels)) * 100
+
+                result['hardest_level'] = max(difficulty_levels)
+                result['easiest_level'] = min(difficulty_levels)
+                result['avg_difficulty'] = sum(difficulty_levels) / len(difficulty_levels)
+
+            results.append(result)
+
+            if (len(results) % 100 == 0) and len(results) > 0:
+                elapsed = time.time() - start_time
+                problems_per_hour = len(results) / (elapsed / 3600)
+                temp_df = pd.DataFrame(results)
+                partial_file = output_csv.replace('.csv', f'_partial_{len(results)}.csv')
+                temp_df.to_csv(partial_file, index=False)
+
+                temp_df.to_csv(output_csv, index=False) #main results file
+
+                logger.info(f"Progress: {len(results):,}/{total_problems:,} problems "
+                          f"({len(results)/total_problems*100:.1f}%)")
+                logger.info(f"Rate: {problems_per_hour:.1f} problems/hour")
+                logger.info(f"Current cost: ${classifier.total_cost:.4f}")
+                logger.info(f"Partial results saved to: {partial_file}")
+
+        except Exception as e:
+            logger.error(f"Error processing row {idx}: {e}")
+
+
+    results_df = pd.DataFrame(results)
+    results_df.to_csv(output_csv, index=False)
+    logger.info(f"Saved final results to: {output_csv}")
+
+    classifier.print_cost_summary()
+
+    print("\n" + "="*60)
+    print("SAMPLE RESULTS (First 3 problems)")
+    print("="*60) #sanity check
+
+    for i in range(min(3, len(results_df))):
+        row = results_df.iloc[i]
+        print(f"\nProblem {i+1} (Index: {row['original_index']}):")
+        print(f"Problem: {row['problem'][:80]}...")
+        print(f"Number of steps: {row['num_steps']}")
+        print(f"Difficulty levels: {row['difficulty_levels']}")
+        print(f"Hardest step: Level {row.get('hardest_level', 'N/A')}")
+        print(f"Average difficulty: {row.get('avg_difficulty', 'N/A'):.2f}")
+        print("-" * 40)
+
+    print("\n" + "="*60)
+    print("OVERALL STATISTICS")
+    print("="*60)
+
+    if not results_df.empty:
+        total_steps = results_df['num_steps'].sum()
+        print(f"Total problems processed: {len(results_df):,}")
+        print(f"Total steps classified: {total_steps:,}")
+
+        all_levels = [] #distribution
+        for levels_str in results_df['difficulty_levels']:
+            if isinstance(levels_str, str):
+                levels = [int(l) for l in levels_str.split(';') if l.isdigit()]
+                all_levels.extend(levels)
+
+        if all_levels:
+            from collections import Counter
+            level_counts = Counter(all_levels)
+            total_levels = len(all_levels)
+
+            print("\nDifficulty Distribution:")
+            for level in range(1, 5):
+                count = level_counts.get(level, 0)
+                percentage = (count / total_levels) * 100 if total_levels > 0 else 0
+                level_name = ['', 'Trivial', 'Simple', 'Intermediate', 'Advanced'][level]
+                print(f"  Level {level} ({level_name}): {count:,} steps ({percentage:.1f}%)")
+
+    return results_df, classifier.total_cost
+
+def main():
+    """Main function for full dataset classification"""
+
+    # ========== CONFIGURATION ==========
+    INPUT_CSV = "C:/Users/Angelina/competition_math_with_steps.csv"
+    API_KEY = "sk-f4f322f63e914c57aa6adc1dd37b31c9"
+    OUTPUT_CSV = "full_classification_results.csv"
+    # ===================================
+
+    if not os.path.exists(INPUT_CSV):
+        logger.error(f"Input file not found: {INPUT_CSV}")
+        logger.error("Please update the INPUT_CSV variable with your file path")
+        return
+
+    if API_KEY.startswith("sk-your"):
+        logger.error("Please update the API_KEY with your actual DeepSeek API key")
+        logger.error("Get it from: https://platform.deepseek.com/api_keys")
+        return
+
+    print("\n" + "="*60)
+    print("FULL DATASET CLASSIFICATION")
+    print("="*60)
+    print(f"Input file: {INPUT_CSV}")
+    print(f"Output file: {OUTPUT_CSV}")
+
+    df = pd.read_csv(INPUT_CSV)
+    total_problems = len(df)
+    print(f"Total problems to process: {total_problems:,}")
+
+    print(f"\nEstimates based on pilot:")
+    print(f"- Estimated steps: ~{total_problems * 5:,} (assuming 5 steps per problem)")
+    print(f"- Estimated time: ~{total_problems * 10 / 3600:.1f} hours")
+    print(f"- Estimated cost: ~${total_problems * 0.00013:.2f} (based on pilot)")
+    print("="*60 + "\n")
+
+    confirm = input("Proceed with full dataset classification? (yes/no): ")
+    if confirm.lower() != 'yes':
+        print("Classification cancelled.")
+        return
+
+    try:
+        results, total_cost = run_full_dataset(INPUT_CSV, API_KEY, OUTPUT_CSV)
+
+        print("\n" + "="*60)
+        print("FULL DATASET CLASSIFICATION COMPLETE!")
+        print("="*60)
+        print(f"Total estimated cost: ${total_cost:.6f}")
+        print(f"Average cost per problem: ${total_cost/len(results):.6f}")
+
+        print("\n" + "="*60)
+        print("RECOMMENDATIONS:")
+        print("="*60)
+        print("1. Check the full_classification_results.csv file")
+        print("2. Review partial_*.csv files for intermediate results")
+        print("3. Analyze the difficulty distribution")
+        print("4. Consider adding caching for future runs")
+
+    except KeyboardInterrupt:
+        print("\n⚠️  Classification interrupted by user.")
+        print("Partial results have been saved.")
+    except Exception as e:
+        logger.error(f"Classification failed: {e}")
+        import traceback
+        traceback.print_exc()
+
+if __name__ == "__main__":
+    main()
